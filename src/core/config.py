@@ -10,11 +10,9 @@ class Settings(BaseSettings):
 
     # Базовые пути к данным
     DATA_DIR: Path = Path("dataset")
-    RETAIL_EVENTS: Path = DATA_DIR / "retail/events"
-    RETAIL_ITEMS: Path = DATA_DIR / "retail/items.pq"
-    MARKETPLACE_EVENTS: Path = DATA_DIR / "marketplace/events"
-    MARKETPLACE_ITEMS: Path = DATA_DIR / "marketplace/items.pq"
-    USERS: Path = DATA_DIR / "users.pq"
-    BRANDS: Path = DATA_DIR / "brands.pq"
+    # Обучающий датасет
+    TRAIN_DATASET: Path = DATA_DIR / "train" / "events"
+    # Тестирующий датасет
+    TEST_DATASET: Path = DATA_DIR / "test" / "events"
 
 settings = Settings()

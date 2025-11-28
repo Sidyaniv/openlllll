@@ -3,394 +3,689 @@ import pandas as pd
 import requests
 import plotly.express as px
 import plotly.graph_objects as go
+from typing import Optional
 
 # Конфигурация
 API_BASE_URL = "http://localhost:8000"
-st.set_page_config(page_title="DeltaPos - Рекомендательная система ПСБ")
-st.title("ПСБ Банк - Рекомендательная система")
+st.set_page_config(
+    page_title="DeltaPos - Рекомендательная система ПСБ", 
+    layout="wide",
+    initial_sidebar_state="expanded"
+)
+
+# Кастомные стили для красивого UI
+st.markdown("""
+<style>
+    .main-header {
+        background: linear-gradient(90deg, #1e3c72 0%, #2a5298 100%);
+        padding: 2rem;
+        border-radius: 10px;
+        color: white;
+        text-align: center;
+        margin-bottom: 2rem;
+        box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+    }
+    .metric-card {
+        background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        padding: 1.5rem;
+        border-radius: 10px;
+        color: white;
+        text-align: center;
+        box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+    }
+    .recommendation-card {
+        background: white;
+        padding: 1.5rem;
+        margin: 1rem 0;
+        border-radius: 10px;
+        box-shadow: 0 2px 8px rgba(0,0,0,0.1);
+        border-left: 4px solid #667eea;
+    }
+    .stButton>button {
+        background: linear-gradient(90deg, #667eea 0%, #764ba2 100%);
+        color: white;
+        border: none;
+        border-radius: 8px;
+        padding: 0.5rem 1.5rem;
+        font-weight: 600;
+        transition: all 0.3s;
+    }
+    .stButton>button:hover {
+        transform: translateY(-2px);
+        box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+    }
+    .info-box {
+        background: #f0f2f6;
+        padding: 1rem;
+        border-radius: 8px;
+        border-left: 4px solid #667eea;
+        margin: 1rem 0;
+    }
+</style>
+""", unsafe_allow_html=True)
+
+# Заголовок
+st.markdown("""
+<div class="main-header">
+    <h1>ПСБ Банк - Рекомендательная система DeltaPos</h1>
+    <p style="margin-top: 0.5rem; font-size: 1.1rem; opacity: 0.9;">Персонализированные рекомендации банковских продуктов</p>
+</div>
+""", unsafe_allow_html=True)
 
 # Инициализация состояния
-if 'selected_dataset' not in st.session_state:
-    st.session_state.selected_dataset = None
 if 'model_trained' not in st.session_state:
     st.session_state.model_trained = False
+if 'selected_test_dataset' not in st.session_state:
+    st.session_state.selected_test_dataset = None
 if 'predictions' not in st.session_state:
     st.session_state.predictions = None
+if 'training_result' not in st.session_state:
+    st.session_state.training_result = None
 
-def train_model(dataset_name: str):
-    """Отправка запроса на обучение модели"""
+def check_model_status():
+    """Проверка статуса модели на бэкенде"""
     try:
-        response = requests.post(f"{API_BASE_URL}/train", json={"dataset_name": dataset_name})
+        # Пытаемся получить метрики - если модель обучена, метрики будут доступны
+        response = requests.get(f"{API_BASE_URL}/metrics/train", timeout=2)
+        if response.status_code == 200:
+            data = response.json()
+            print(data)
+            # Проверяем, что метрики действительно есть (не ошибка)
+            if data.get("status") != 'error':
+                return True
+        return False
+    except requests.exceptions.RequestException:
+        return False
+    except Exception:
+        return False
+
+def train_model():
+    """Отправка запроса на обучение модели (используется train датасет)"""
+    try:
+        response = requests.post(f"{API_BASE_URL}/train", json={"dataset_name": "train"})
         return response.json()
     except Exception as e:
         return {"status": "error", "message": str(e)}
 
-def get_predictions(dataset_name: str, customer_ids: list[str] = None):
-    """Получение предсказаний от API"""
+def get_predictions(test_dataset_name: str, customer_ids: Optional[list[str]] = None):
+    """Получение предсказаний от API для тестового датасета"""
     try:
-        payload = {"dataset_name": dataset_name}
+        payload = {"dataset_name": test_dataset_name}
         if customer_ids:
             payload["customer_ids"] = customer_ids
-            
-        response = requests.post(f"{API_BASE_URL}/predict", json=payload)
+        response = requests.post(f"{API_BASE_URL}/predict", json=payload, timeout=30)
+        response.raise_for_status()  # Вызовет исключение для статусов 4xx, 5xx
         return response.json()
+    except requests.exceptions.HTTPError as e:
+        # Обработка HTTP ошибок (400, 404, 500, etc.)
+        try:
+            error_data = e.response.json()
+            detail = error_data.get("detail", str(e))
+            return {"status": "error", "message": detail}
+        except:
+            return {"status": "error", "message": f"HTTP {e.response.status_code}: {str(e)}"}
+    except requests.exceptions.RequestException as e:
+        return {"status": "error", "message": f"Ошибка соединения: {str(e)}"}
     except Exception as e:
-        return {"status": "error", "message": str(e)}
+        return {"status": "error", "message": f"Неизвестная ошибка: {str(e)}"}
 
 def get_metrics(dataset_name: str):
     """Получение метрик модели"""
     try:
-        response = requests.get(f"{API_BASE_URL}/metrics/{dataset_name}")
-        return response.json()
+        response = requests.get(f"{API_BASE_URL}/metrics/{dataset_name}", timeout=5)
+        response.raise_for_status()  # Вызовет исключение для статусов 4xx, 5xx
+        data = response.json()
+        # Убираем error из ответа если он None (Pydantic может добавить его)
+        if data.get('error') is None:
+            data.pop('error', None)
+        return data
+    except requests.exceptions.HTTPError as e:
+        # Обработка HTTP ошибок (404, 500, etc.)
+        try:
+            error_data = e.response.json()
+            return {"error": error_data.get("detail", str(e))}
+        except:
+            return {"error": f"HTTP {e.response.status_code}: {str(e)}"}
+    except requests.exceptions.RequestException as e:
+        return {"error": f"Ошибка соединения: {str(e)}"}
     except Exception as e:
-        return {"error": str(e)}
+        return {"error": f"Неизвестная ошибка: {str(e)}"}
 
 # Навигация
-page = st.sidebar.radio("📊 Navigation", [
-    "Тренировка модели", 
-    "Рекомендации продуктов", 
-    "Анализ модели",
-    "Как использовать наш продукт"
+st.sidebar.subheader("Навигация")
+page = st.sidebar.radio("", [
+    "Обучение модели", 
+    "Рекомендации", 
+    "Аналитика модели"
 ])
 
 # Страница 1: Обучение модели
-if page == "Тренировка модели":
-    st.header("Тренировка модели")
+if page == "Обучение модели":
+    st.header("Обучение модели")
     
-    # Получаем доступные датасеты
-    datasets = ["retail", "marketplace"]
-        # Selectbox для выбора датасета
-    st.subheader("1. Select Dataset")
+    # Проверяем статус модели при загрузке страницы
+    if 'model_status_checked' not in st.session_state:
+        st.session_state.model_trained = check_model_status()
+        st.session_state.model_status_checked = True
+    
+    # Показываем статус модели
+    if st.session_state.model_trained:
+        st.success("Модель уже обучена!")
         
-    selected_dataset = st.selectbox(
-            "Choose a dataset to train the model:",
-        options=datasets,
-        index=0,
-        placeholder="Select dataset...",
-        key="dataset_selector"
-        )
-        
-        # Сохраняем выбранный датасет в session state
-    if selected_dataset and selected_dataset != st.session_state.selected_dataset:
-        st.session_state.selected_dataset = selected_dataset
-        st.session_state.model_trained = False
-        st.session_state.predictions = None
-        
-        # Показываем выбранный датасет
-    if st.session_state.selected_dataset:
-        st.success(f"Selected: {st.session_state.selected_dataset}")
-            
-            # Информация о датасете
-        with st.expander("📊 Dataset Info"):
-            st.info(f"**Dataset:** {st.session_state.selected_dataset}")
-            st.info(f"**File:** data/{st.session_state.selected_dataset}.pq")
-            
-            # Кнопка обучения
-        st.subheader("2. Train Model")
-            
-        col1, col2 = st.columns([1, 3])
+        # Показываем результаты предыдущего обучения
+        # if st.session_state.training_result:
+        st.subheader("Результаты обучения")
+        col1, col2, col3, col4 = st.columns(4)
         with col1:
-            train_btn = st.button("Train Recommendation Model", type="primary", use_container_width=True)
+            st.metric("Размер датасета", f"{st.session_state.training_result.get('dataset_size', 0):,}")
+        with col2:
+            st.metric("Точность", f"{st.session_state.training_result.get('accuracy', 0):.2%}")
+        with col3:
+            st.metric("Кол-во признаков", len(st.session_state.training_result.get('features_used', [])))
+        with col4:
+            st.metric("Тип модели", st.session_state.training_result.get('model_type', 'Unknown'))
             
-        if train_btn:
-            with st.spinner("Training model... This may take a few minutes"):
-                result = train_model(st.session_state.selected_dataset)
-                    
+            # Показываем использованные фичи
+        with st.expander("Просмотр использованных признаков"):
+            features = st.session_state.training_result.get('features_used', [])
+            st.write(f"**Всего признаков:** {len(features)}")
+            for i, feature in enumerate(features, 1):
+                st.write(f"{i}. {feature}")
+        
+        # Загружаем метрики с бэкенда
+        with st.spinner("Загрузка информации о модели..."):
+            metrics = get_metrics("train")
+            if not metrics.get('error'):
+                st.info(f"Модель обучена на {metrics.get('dataset_size', 0):,} записях с точностью {metrics.get('accuracy', 0):.2%}")
+        
+        st.markdown("---")
+        st.info("Вы можете перейти к генерации рекомендаций или переобучить модель")
+        
+        # Кнопка переобучения
+        col1, col2, col3 = st.columns([1, 1, 2])
+        with col1:
+            retrain_btn = st.button("Переобучить модель", type="secondary", use_container_width=True)
+        
+        if retrain_btn:
+            with st.spinner("Переобучение модели... Это может занять несколько минут"):
+                result = train_model()
+                
                 if result.get('status') == 'success':
                     st.session_state.model_trained = True
-                    st.success("🎉 Model trained successfully!")
-                        
-                        # Показываем базовую информацию
-                    st.subheader("📈 Training Results")
-                        
+                    st.session_state.training_result = result
+                    st.success("Модель успешно переобучена!")
+                    st.rerun()
+                else:
+                    st.error(f"Ошибка обучения: {result.get('message')}")
+    else:
+        # Модель не обучена - показываем кнопку обучения
+        st.info("Модель еще не обучена. Нажмите кнопку ниже для начала обучения.")
+        
+        st.markdown("---")
+        st.subheader("Запуск обучения")
+        
+        col1, col2, col3 = st.columns([1, 1, 2])
+        with col1:
+            train_btn = st.button("Обучить модель", type="primary", use_container_width=True)
+        
+        if train_btn:
+            with st.spinner("Обучение модели... Это может занять несколько минут"):
+                result = train_model()
+                
+                if result.get('status') == 'success':
+                    st.session_state.model_trained = True
+                    st.session_state.training_result = result
+                    st.success("Модель успешно обучена!")
+                    
+                    # Показываем результаты
+                    st.subheader("Результаты обучения")
+                    
                     col1, col2, col3, col4 = st.columns(4)
                     with col1:
-                        st.metric("Dataset Size", f"{result.get('dataset_size', 0):,}")
+                        st.metric("Размер датасета", f"{result.get('dataset_size', 0):,}")
                     with col2:
-                        st.metric("Accuracy", f"{result.get('accuracy', 0):.2%}")
+                        st.metric("Точность", f"{result.get('accuracy', 0):.2%}")
                     with col3:
-                        st.metric("Features Used", len(result.get('features_used', [])))
+                        st.metric("Кол-во признаков", len(result.get('features_used', [])))
                     with col4:
-                        st.metric("Status", "Trained ✅")
-                        
-                        # Показываем использованные фичи
-                    with st.expander("🔍 View Features Used"):
+                        st.metric("Тип модели", result.get('model_type', 'Unknown'))
+                    
+                    # Показываем использованные фичи
+                    with st.expander("Просмотр использованных признаков"):
                         features = result.get('features_used', [])
-                        st.write(f"**Total features:** {len(features)}")
+                        st.write(f"**Всего признаков:** {len(features)}")
                         for i, feature in enumerate(features, 1):
                             st.write(f"{i}. {feature}")
-                                
                 else:
-                    st.error(f"❌ Training failed: {result.get('message')}")
+                    st.error(f"Ошибка обучения: {result.get('message')}")
 
-# Страница 2: Рекомендации продуктов
-elif page == "Product Recommendations":
-    st.header("Product Recommendations")
+# Страница 2: Рекомендации
+elif page == "Рекомендации":
+    st.header("Генерация рекомендаций")
     
-    if not st.session_state.selected_dataset:
-        st.warning("Please select a dataset on the Training page first")
-    elif not st.session_state.model_trained:
-        st.warning("Please train the model first on the Training page")
+    # Проверяем, обучена ли модель
+    if not st.session_state.model_trained:
+        # Проверяем на бэкенде
+        st.session_state.model_trained = check_model_status()
+    
+    if not st.session_state.model_trained:
+        st.warning("Модель не обучена. Пожалуйста, сначала обучите модель на странице 'Обучение модели'.")
+        if st.button("Перейти к обучению"):
+            st.session_state.model_status_checked = False
+            st.rerun()
     else:
-        st.success(f"Using model: {st.session_state.selected_dataset}")
+        st.success("Модель обучена и готова к использованию")
         
-        # Опции для предсказаний
-        st.subheader("1. Prediction Options")
+        # Список тестовых датасетов
+        test_datasets = {
+            "test": "Тестовый датасет (Test Dataset)",
+            "test_1": "Тестовый датасет 1",
+            "test_2": "Тестовый датасет 2",
+            "test_3": "Тестовый датасет 3"
+        }
         
-        prediction_option = st.radio(
-            "Choose prediction scope:",
-            ["All Customers", "Specific Customers"],
-            horizontal=True
+        st.subheader("1. Выбор тестового датасета")
+        
+        selected_test_dataset = st.selectbox(
+            label="Выберите тестовый датасет для генерации рекомендаций:",
+            options=list(test_datasets.keys()),
+            format_func=lambda x: test_datasets[x],
+            index=0,
+            key="test_dataset_selector",
+            help="Выберите датасет с клиентами, для которых нужно сгенерировать рекомендации"
         )
         
-        customer_ids_input = None
-        if prediction_option == "Specific Customers":
-            customer_ids_input = st.text_input(
-                "Enter Customer IDs (comma-separated):",
-                placeholder="CUST001, CUST002, CUST003"
-            )
-            if customer_ids_input:
-                customer_ids = [cid.strip() for cid in customer_ids_input.split(",")]
-                st.info(f"Will predict for {len(customer_ids)} customers")
+        st.session_state.selected_test_dataset = selected_test_dataset
         
-        # Получение предсказаний
-        st.subheader("2. Generate Recommendations")
-        
-        if st.button("Generate Recommendations", type="primary"):
-            with st.spinner("Generating recommendations..."):
-                customer_ids_list = customer_ids if prediction_option == "Specific Customers" and customer_ids_input else None
-                predictions = get_predictions(st.session_state.selected_dataset, customer_ids_list)
-                
-                if predictions.get('status') == 'success':
-                    st.session_state.predictions = predictions
-                    prediction_count = len(predictions['predictions'])
-                    st.success(f"✅ Generated recommendations for {prediction_count} customers")
-                else:
-                    st.error(f"❌ Prediction failed: {predictions.get('message')}")
-        
-        # Отображение рекомендаций
-        if st.session_state.predictions:
-            predictions_data = st.session_state.predictions['predictions']
+        if selected_test_dataset:
+            st.markdown(f"""
+            <div class="info-box">
+                <strong>Выбран датасет:</strong> {test_datasets[selected_test_dataset]}
+            </div>
+            """, unsafe_allow_html=True)
             
-            st.subheader("3. Explore Recommendations")
+            st.markdown("---")
+            st.subheader("2. Настройка генерации рекомендаций")
             
-            # Выбор клиента для детального просмотра
-            customer_options = {p['customer_id']: p for p in predictions_data}
-            selected_customer = st.selectbox(
-                "🔍 Select Customer for Detailed View:",
-                options=list(customer_options.keys()),
-                index=0
+            # Выбор режима: все пользователи или конкретные
+            generation_mode = st.radio(
+                label="Режим генерации:",
+                options=["Все пользователи из датасета", "Конкретные пользователи"],
+                horizontal=True,
+                key="generation_mode",
+                help="Выберите, для кого генерировать рекомендации"
             )
             
-            if selected_customer:
-                customer_data = customer_options[selected_customer]
-                
-                # Профиль клиента
-                col1, col2 = st.columns([1, 2])
-                
-                with col1:
-                    st.subheader("👤 Customer Profile")
-                    profile_df = pd.DataFrame.from_dict(customer_data['profile'], orient='index', columns=['Value'])
-                    st.dataframe(profile_df, use_container_width=True)
-                
-                with col2:
-                    st.subheader("🎯 Top Product Recommendations")
-                    rec_df = pd.DataFrame(customer_data['recommendations'])
-                    rec_df['rank'] = range(1, len(rec_df) + 1)
-                    
-                    # Визуализация рекомендаций
-                    fig = px.bar(rec_df.head(10), x='probability', y='product', 
-                                orientation='h', color='confidence',
-                                color_discrete_map={
-                                    'high': '#2E8B57', 
-                                    'medium': '#FFA500', 
-                                    'low': '#DC143C'
-                                },
-                                title=f"Top Recommendations for {selected_customer}",
-                                labels={'probability': 'Probability', 'product': 'Product'})
-                    fig.update_layout(yaxis={'categoryorder':'total ascending'})
-                    st.plotly_chart(fig, use_container_width=True)
-                
-                # Детальная таблица рекомендаций
-                st.subheader("📋 Detailed Recommendations")
-                
-                # Форматируем таблицу для лучшего отображения
-                display_df = rec_df.copy()
-                display_df['probability'] = display_df['probability'].apply(lambda x: f"{x:.2%}")
-                display_df['rank'] = display_df['rank'].astype(int)
-                
-                st.dataframe(
-                    display_df[['rank', 'product', 'probability', 'confidence']],
-                    use_container_width=True,
-                    hide_index=True
+            customer_ids = None
+            customer_ids_input = None
+            
+            if generation_mode == "Конкретные пользователи":
+                customer_ids_input = st.text_area(
+                    label="Введите ID пользователей (по одному на строку или через запятую):",
+                    placeholder="CUST001\nCUST002\nCUST003\n\nили\n\nCUST001, CUST002, CUST003",
+                    key="customer_ids_input",
+                    help="Введите ID пользователей, для которых нужно сгенерировать рекомендации",
+                    height=100
                 )
                 
-                # Кнопка скачивания всех рекомендаций
-                st.subheader("4. Export Results")
+                if customer_ids_input:
+                    # Обработка разных форматов ввода
+                    lines = customer_ids_input.replace(',', '\n').split('\n')
+                    customer_ids = [cid.strip() for cid in lines if cid.strip()]
+                    customer_ids = [cid for cid in customer_ids if cid]  # Убираем пустые
+                    
+                    if customer_ids:
+                        st.info(f"Будет обработано {len(customer_ids)} пользователей: {', '.join(customer_ids[:5])}{'...' if len(customer_ids) > 5 else ''}")
+                    else:
+                        st.warning("Не найдено валидных ID пользователей")
+            
+            st.markdown("---")
+            st.subheader("3. Генерация рекомендаций")
+            
+            col1, col2, col3 = st.columns([1, 1, 2])
+            with col1:
+                generate_btn = st.button("Сгенерировать рекомендации", type="primary", use_container_width=True)
+            
+            # Генерация при нажатии кнопки
+            if generate_btn:
+                if generation_mode == "Конкретные пользователи" and not customer_ids:
+                    st.warning("Пожалуйста, введите ID пользователей для генерации рекомендаций")
+                else:
+                    with st.spinner("Генерация рекомендаций..."):
+                        predictions = get_predictions(selected_test_dataset, customer_ids)
+                        
+                        if predictions.get('status') == 'success':
+                            st.session_state.predictions = predictions
+                            st.session_state.last_generated_dataset = selected_test_dataset
+                            prediction_count = len(predictions.get('predictions', []))
+                            st.success(f"Сгенерировано рекомендаций для {prediction_count} клиентов")
+                            st.balloons()
+                        else:
+                            error_msg = predictions.get('message') or "Неизвестная ошибка"
+                            st.error(f"Ошибка генерации: {error_msg}")
+                            
+                            # Дополнительная информация для отладки
+                            with st.expander("Детали ошибки"):
+                                st.json(predictions)
+            
+            # Отображение рекомендаций
+            if st.session_state.predictions and st.session_state.predictions.get('status') == 'success':
+                predictions_data = st.session_state.predictions.get('predictions', [])
                 
-                if st.button("Download All Recommendations as CSV"):
-                    all_recs = []
-                    for customer in predictions_data:
-                        for rec in customer['recommendations']:
-                            all_recs.append({
-                                'customer_id': customer['customer_id'],
-                                'product': rec['product'],
-                                'probability': rec['probability'],
-                                'confidence': rec['confidence']
-                            })
+                if predictions_data:
+                    st.markdown("---")
+                    st.subheader("4. Просмотр рекомендаций")
                     
-                    export_df = pd.DataFrame(all_recs)
-                    csv = export_df.to_csv(index=False)
-                    
-                    st.download_button(
-                        label="Download CSV",
-                        data=csv,
-                        file_name=f"recommendations_{st.session_state.selected_dataset}.csv",
-                        mime="text/csv"
-                    )
-
-# Страница 3: Аналитика модели
-elif page == "Model Analytics":
-    st.header("📊 Model Analytics")
-    
-    if not st.session_state.selected_dataset:
-        st.warning("Please select a dataset on the Training page first")
-    elif not st.session_state.model_trained:
-        st.warning("Please train the model first on the Training page")
-    else:
-        st.success(f"Analyzing: {st.session_state.selected_dataset}")
-        
-        # Кнопка обновления метрик
-        if st.button("🔄 Refresh Analytics", type="primary"):
-            with st.spinner("Loading analytics..."):
-                metrics = get_metrics(st.session_state.selected_dataset)
-                
-                if 'error' not in metrics:
-                    # Основные метрики
-                    st.subheader("Key Metrics")
-                    
-                    col1, col2, col3, col4 = st.columns(4)
+                    # Статистика по рекомендациям
+                    col1, col2, col3 = st.columns(3)
                     with col1:
-                        st.metric(
-                            "Model Accuracy", 
-                            f"{metrics.get('accuracy', 0):.2%}",
-                            delta=None
+                        st.metric("Всего клиентов", len(predictions_data))
+                    with col2:
+                        total_recs = sum(len(c.get('recommendations', [])) for c in predictions_data)
+                        st.metric("Всего рекомендаций", total_recs)
+                    with col3:
+                        avg_recs = total_recs / len(predictions_data) if predictions_data else 0
+                        st.metric("Среднее на клиента", f"{avg_recs:.1f}")
+                    
+                    # Выбор клиента для детального просмотра
+                    customer_options = {p['customer_id']: p for p in predictions_data}
+                    
+                    # Улучшенный выбор клиента с поиском
+                    col1, col2 = st.columns([2, 1])
+                    with col1:
+                        selected_customer = st.selectbox(
+                            label="Выберите клиента для детального просмотра:",
+                            options=list(customer_options.keys()),
+                            index=0,
+                            key="selected_customer_view",
+                            help="Выберите клиента из списка для просмотра его рекомендаций"
                         )
                     with col2:
-                        st.metric("Dataset Size", f"{metrics.get('dataset_size', 0):,}")
-                    with col3:
-                        st.metric("Number of Features", len(metrics.get('feature_importance', {})))
-                    with col4:
-                        st.metric("Model Type", metrics.get('model_type', 'RandomForest'))
-                    
-                    # Feature Importance
-                    st.subheader("Feature Importance")
-                    feature_imp = metrics.get('feature_importance', {})
-                    if feature_imp:
-                        imp_df = pd.DataFrame.from_dict(feature_imp, orient='index', columns=['importance'])
-                        imp_df = imp_df.sort_values('importance', ascending=True)  # Для горизонтального bar chart
-                        
-                        fig = px.bar(
-                            imp_df, 
-                            x='importance', 
-                            y=imp_df.index,
-                            orientation='h',
-                            title="Feature Importance Scores",
-                            labels={'importance': 'Importance', 'index': 'Features'}
+                        # Быстрый поиск по ID
+                        search_id = st.text_input(
+                            label="Быстрый поиск по ID:",
+                            placeholder="CUST001",
+                            key="customer_search",
+                            help="Введите ID клиента для быстрого поиска"
                         )
-                        fig.update_layout(showlegend=False, yaxis={'categoryorder': 'total ascending'})
-                        st.plotly_chart(fig, use_container_width=True)
+                        if search_id:
+                            if search_id in customer_options:
+                                selected_customer = search_id
+                                st.success(f"Найден: {search_id}")
+                            else:
+                                st.warning(f"Клиент {search_id} не найден")
                     
-                    # Распределение продуктов
-                    st.subheader("Product Distribution")
-                    product_dist = metrics.get('product_distribution', {})
-                    if product_dist:
-                        col1, col2 = st.columns(2)
+                    if selected_customer:
+                        customer_data = customer_options[selected_customer]
+                        
+                        # Профиль клиента и рекомендации
+                        col1, col2 = st.columns([1, 2])
                         
                         with col1:
-                            fig_pie = px.pie(
-                                values=list(product_dist.values()), 
-                                names=list(product_dist.keys()),
-                                title="Preferred Product Distribution"
-                            )
-                            st.plotly_chart(fig_pie, use_container_width=True)
+                            st.markdown(f"""
+                            <div class="recommendation-card">
+                                <h3>Профиль клиента</h3>
+                                <p><strong>ID:</strong> {selected_customer}</p>
+                            </div>
+                            """, unsafe_allow_html=True)
+                            
+                            profile = customer_data.get('profile', {})
+                            if profile:
+                                # Красивое отображение профиля
+                                for key, value in profile.items():
+                                    st.markdown(f"**{key.replace('_', ' ').title()}:** {value}")
+                                
+                                # Дополнительная информация
+                                st.markdown("---")
+                                st.markdown("### Статистика")
+                                rec_count = len(customer_data.get('recommendations', []))
+                                st.metric("Количество рекомендаций", rec_count)
+                                
+                                if rec_count > 0:
+                                    top_rec = customer_data['recommendations'][0]
+                                    st.metric("Топ рекомендация", top_rec.get('product', 'N/A'))
+                                    st.metric("Вероятность", f"{top_rec.get('probability', 0):.2%}")
                         
                         with col2:
-                            fig_bar = px.bar(
-                                x=list(product_dist.keys()), 
-                                y=list(product_dist.values()),
-                                title="Product Counts",
-                                labels={'x': 'Product', 'y': 'Count'}
+                            st.markdown(f"""
+                            <div class="recommendation-card">
+                                <h3>Топ рекомендаций</h3>
+                            </div>
+                            """, unsafe_allow_html=True)
+                            
+                            rec_df = pd.DataFrame(customer_data.get('recommendations', []))
+                            if not rec_df.empty:
+                                rec_df['rank'] = range(1, len(rec_df) + 1)
+                                
+                                # Улучшенная визуализация рекомендаций
+                                fig = px.bar(
+                                    rec_df.head(10), 
+                                    x='probability', 
+                                    y='product', 
+                                    orientation='h', 
+                                    color='confidence',
+                                    color_discrete_map={
+                                        'high': '#2E8B57', 
+                                        'medium': '#FFA500', 
+                                        'low': '#DC143C'
+                                    },
+                                    title=f"Топ рекомендаций для {selected_customer}",
+                                    labels={'probability': 'Вероятность', 'product': 'Продукт'},
+                                    text='probability'
+                                )
+                                fig.update_traces(
+                                    texttemplate='%{text:.1%}',
+                                    textposition='outside',
+                                    marker_line_color='white',
+                                    marker_line_width=1.5
+                                )
+                                fig.update_layout(
+                                    yaxis={'categoryorder': 'total ascending'},
+                                    height=400,
+                                    showlegend=True,
+                                    plot_bgcolor='rgba(0,0,0,0)',
+                                    paper_bgcolor='rgba(0,0,0,0)'
+                                )
+                                st.plotly_chart(fig, use_container_width=True)
+                        
+                        # Детальная таблица рекомендаций
+                        st.markdown("---")
+                        st.subheader("Детальные рекомендации")
+                        if not rec_df.empty:
+                            display_df = rec_df.copy()
+                            display_df['probability'] = display_df['probability'].apply(lambda x: f"{x:.2%}")
+                            display_df['rank'] = display_df['rank'].astype(int)
+                            
+                            # Улучшенное отображение таблицы
+                            st.dataframe(
+                                display_df[['rank', 'product', 'probability', 'confidence']],
+                                use_container_width=True,
+                                hide_index=True,
+                                column_config={
+                                    "rank": "Ранг",
+                                    "product": "Продукт",
+                                    "probability": "Вероятность",
+                                    "confidence": st.column_config.TextColumn(
+                                        "Уверенность",
+                                        help="Уровень уверенности в рекомендации"
+                                    )
+                                }
                             )
-                            st.plotly_chart(fig_bar, use_container_width=True)
+                            
+                            # Дополнительная информация
+                            col1, col2 = st.columns(2)
+                            with col1:
+                                high_conf = len(rec_df[rec_df['confidence'] == 'high'])
+                                st.metric("Высокая уверенность", high_conf)
+                            with col2:
+                                avg_prob = rec_df['probability'].mean()
+                                st.metric("Средняя вероятность", f"{avg_prob:.2%}")
                     
-                    # Сегменты клиентов
-                    st.subheader("👥 Customer Segments")
-                    segment_dist = metrics.get('segment_distribution', {})
-                    if segment_dist:
-                        # Создаем понятные названия для сегментов
-                        segment_names = {
-                            0: "Budget-Conscious 🟡",
-                            1: "Premium Loyalists 🔵", 
-                            2: "Balanced Seekers 🟢",
-                            3: "New Explorers 🟠"
-                        }
-                        
-                        segment_data = {
-                            segment_names.get(k, f"Segment {k}"): v 
-                            for k, v in segment_dist.items()
-                        }
-                        
-                        fig = px.bar(
-                            x=list(segment_data.keys()), 
-                            y=list(segment_data.values()),
-                            title="Customer Segment Distribution",
-                            labels={'x': 'Customer Segment', 'y': 'Number of Customers'},
-                            color=list(segment_data.keys())
+                    # Экспорт результатов
+                    st.markdown("---")
+                    st.subheader("5. Экспорт результатов")
+                    
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        if st.button("Скачать все рекомендации как CSV", use_container_width=True):
+                            all_recs = []
+                            for customer in predictions_data:
+                                for rec in customer.get('recommendations', []):
+                                    all_recs.append({
+                                        'customer_id': customer['customer_id'],
+                                        'product': rec['product'],
+                                        'probability': rec['probability'],
+                                        'confidence': rec['confidence']
+                                    })
+                            
+                            export_df = pd.DataFrame(all_recs)
+                            csv = export_df.to_csv(index=False)
+                            
+                            st.download_button(
+                                label="Скачать CSV файл",
+                                data=csv,
+                                file_name=f"recommendations_{selected_test_dataset}_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.csv",
+                                mime="text/csv",
+                                use_container_width=True
+                            )
+                    
+                    with col2:
+                        # Показываем предпросмотр данных для экспорта
+                        if st.button("Предпросмотр данных", use_container_width=True):
+                            preview_data = []
+                            for customer in predictions_data[:5]:  # Первые 5 для предпросмотра
+                                for rec in customer.get('recommendations', [])[:3]:  # Первые 3 рекомендации
+                                    preview_data.append({
+                                        'customer_id': customer['customer_id'],
+                                        'product': rec['product'],
+                                        'probability': f"{rec['probability']:.2%}",
+                                        'confidence': rec['confidence']
+                                    })
+                            
+                            if preview_data:
+                                preview_df = pd.DataFrame(preview_data)
+                                st.dataframe(preview_df, use_container_width=True)
+                                st.caption(f"Показано {len(preview_data)} записей из {sum(len(c.get('recommendations', [])) for c in predictions_data)}")
+
+# Страница 3: Аналитика модели
+elif page == "Аналитика модели":
+    st.header("Аналитика модели")
+    
+    # Проверяем, обучена ли модель
+    if not st.session_state.model_trained:
+        st.session_state.model_trained = check_model_status()
+    
+    if not st.session_state.model_trained:
+        st.warning("Модель не обучена. Пожалуйста, сначала обучите модель.")
+    else:
+        st.success("Анализ обученной модели")
+        
+        # Автоматическая загрузка метрик
+        with st.spinner("Загрузка метрик модели..."):
+            metrics = get_metrics("train")
+            
+            # Проверяем наличие ошибки (не просто ключ, а реальное значение)
+            if not metrics.get('error'):
+                # Основные метрики
+                st.subheader("Ключевые метрики")
+                
+                col1, col2, col3, col4 = st.columns(4)
+                with col1:
+                    st.metric("Точность модели", f"{metrics.get('accuracy', 0):.2%}")
+                with col2:
+                    st.metric("Размер датасета", f"{metrics.get('dataset_size', 0):,}")
+                with col3:
+                    st.metric("Кол-во признаков", len(metrics.get('feature_importance', {})))
+                with col4:
+                    st.metric("Тип модели", metrics.get('model_type', 'Unknown'))
+                
+                # Важность признаков
+                st.subheader("Важность признаков")
+                feature_imp = metrics.get('feature_importance', {})
+                if feature_imp:
+                    imp_df = pd.DataFrame.from_dict(feature_imp, orient='index', columns=['importance'])
+                    imp_df = imp_df.sort_values('importance', ascending=True)
+                    
+                    fig = px.bar(
+                        imp_df, 
+                        x='importance', 
+                        y=imp_df.index,
+                        orientation='h',
+                        title="Важность признаков в модели",
+                        labels={'importance': 'Важность', 'index': 'Признаки'}
+                    )
+                    fig.update_layout(showlegend=False, yaxis={'categoryorder': 'total ascending'})
+                    st.plotly_chart(fig, use_container_width=True)
+                
+                # Распределение продуктов
+                st.subheader("Распределение продуктов")
+                product_dist = metrics.get('product_distribution', {})
+                if product_dist:
+                    col1, col2 = st.columns(2)
+                    
+                    with col1:
+                        fig_pie = px.pie(
+                            values=list(product_dist.values()), 
+                            names=list(product_dist.keys()),
+                            title="Распределение предпочтений продуктов"
                         )
-                        st.plotly_chart(fig, use_container_width=True)
-                        
-                else:
-                    st.error(f"Failed to load metrics: {metrics.get('error')}")
-        else:
-            st.info("Click 'Refresh Analytics' to view model metrics and performance")
-elif page == 'How to use':
-    st.header("Quick Start Guide:")
-    st.subheader("1. Training Page")
-    st.info("""
-    → Select dataset  
-    → Click 'Train Model'
-""")
-    st.subheader("2. Recommendations Page")
-    st.info(""" 
-    → Generate predictions  
-    → Explore customer recommendations
-    """)
-    st.subheader("3. Analytics Page")
-    st.info(""" 
-    → View model metrics  
-    → Analyze feature importance
-    """)
-
-
-
+                        st.plotly_chart(fig_pie, use_container_width=True)
+                    
+                    with col2:
+                        fig_bar = px.bar(
+                            x=list(product_dist.keys()), 
+                            y=list(product_dist.values()),
+                            title="Количество по продуктам",
+                            labels={'x': 'Продукт', 'y': 'Количество'}
+                        )
+                        st.plotly_chart(fig_bar, use_container_width=True)
+                
+                # Сегменты клиентов
+                st.subheader("Сегменты клиентов")
+                segment_dist = metrics.get('segment_distribution', {})
+                if segment_dist:
+                    segment_names = {
+                        0: "Бюджетные 🟡",
+                        1: "Премиум 🔵", 
+                        2: "Сбалансированные 🟢",
+                        3: "Новые 🟠"
+                    }
+                    
+                    segment_data = {
+                        segment_names.get(k, f"Сегмент {k}"): v 
+                        for k, v in segment_dist.items()
+                    }
+                    
+                    fig = px.bar(
+                        x=list(segment_data.keys()), 
+                        y=list(segment_data.values()),
+                        title="Распределение сегментов клиентов",
+                        labels={'x': 'Сегмент', 'y': 'Количество клиентов'},
+                        color=list(segment_data.keys())
+                    )
+                    st.plotly_chart(fig, use_container_width=True)
+            else:
+                error_msg = metrics.get('error') or "Неизвестная ошибка"
+                st.error(f"Ошибка загрузки метрик: {error_msg}")
+                
+                # Показываем дополнительную информацию для отладки
+                with st.expander("🔍 Детали ошибки"):
+                    st.json(metrics)
 
 # Показываем текущий статус в боковой панели
 st.sidebar.markdown("---")
-st.sidebar.subheader("Current Status")
-
-if st.session_state.selected_dataset:
-    st.sidebar.success(f"**Dataset:** {st.session_state.selected_dataset}")
-else:
-    st.sidebar.warning("**Dataset:** Not selected")
+st.sidebar.subheader("Текущий статус")
 
 if st.session_state.model_trained:
-    st.sidebar.success("**Model:** Trained ✅")
+    st.sidebar.success("**Модель:** Обучена")
 else:
-    st.sidebar.warning("**Model:** Not trained")
+    st.sidebar.warning("**Модель:** Не обучена")
+
+if st.session_state.selected_test_dataset:
+    st.sidebar.info(f"**Тестовый датасет:** {st.session_state.selected_test_dataset}")
 
 if st.session_state.predictions:
     pred_count = len(st.session_state.predictions.get('predictions', []))
-    st.sidebar.info(f"**Predictions:** {pred_count} customers")
+    st.sidebar.info(f"**Рекомендации:** {pred_count} клиентов")
 else:
-    st.sidebar.info("**Predictions:** None")
+    st.sidebar.info("**Рекомендации:** Нет")
