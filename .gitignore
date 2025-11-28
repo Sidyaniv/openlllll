@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 __pycache__/
 *.py[cod]
 *$py.class
@@ -17,3 +18,17 @@ pip-delete-this-directory.txt
 .pytest_cache/
 pyvenv.cfg
 venv*/
+=======
+# Virtual environment
+.venv/
+venv/
+
+# IDE
+.idea/
+.vscode/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+>>>>>>> origin/backend

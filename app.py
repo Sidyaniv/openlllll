@@ -47,15 +47,15 @@ def get_metrics(dataset_name: str):
 
 # Навигация
 page = st.sidebar.radio("📊 Navigation", [
-    "Model Training", 
-    "Product Recommendations", 
-    "Model Analytics",
-    "How to use"
+    "Тренировка модели", 
+    "Рекомендации продуктов", 
+    "Анализ модели",
+    "Как использовать наш продукт"
 ])
 
 # Страница 1: Обучение модели
-if page == "Model Training":
-    st.header("🎯 Model Training")
+if page == "Тренировка модели":
+    st.header("Тренировка модели")
     
     # Получаем доступные датасеты
     datasets = ["retail", "marketplace"]
@@ -78,7 +78,7 @@ if page == "Model Training":
         
         # Показываем выбранный датасет
     if st.session_state.selected_dataset:
-        st.success(f"✅ Selected: {st.session_state.selected_dataset}")
+        st.success(f"Selected: {st.session_state.selected_dataset}")
             
             # Информация о датасете
         with st.expander("📊 Dataset Info"):
@@ -90,7 +90,7 @@ if page == "Model Training":
             
         col1, col2 = st.columns([1, 3])
         with col1:
-            train_btn = st.button("🚀 Train Recommendation Model", type="primary", use_container_width=True)
+            train_btn = st.button("Train Recommendation Model", type="primary", use_container_width=True)
             
         if train_btn:
             with st.spinner("Training model... This may take a few minutes"):
@@ -125,12 +125,12 @@ if page == "Model Training":
 
 # Страница 2: Рекомендации продуктов
 elif page == "Product Recommendations":
-    st.header("🎯 Product Recommendations")
+    st.header("Product Recommendations")
     
     if not st.session_state.selected_dataset:
-        st.warning("⚠️ Please select a dataset on the Training page first")
+        st.warning("Please select a dataset on the Training page first")
     elif not st.session_state.model_trained:
-        st.warning("⚠️ Please train the model first on the Training page")
+        st.warning("Please train the model first on the Training page")
     else:
         st.success(f"Using model: {st.session_state.selected_dataset}")
         
@@ -156,7 +156,7 @@ elif page == "Product Recommendations":
         # Получение предсказаний
         st.subheader("2. Generate Recommendations")
         
-        if st.button("🎯 Generate Recommendations", type="primary"):
+        if st.button("Generate Recommendations", type="primary"):
             with st.spinner("Generating recommendations..."):
                 customer_ids_list = customer_ids if prediction_option == "Specific Customers" and customer_ids_input else None
                 predictions = get_predictions(st.session_state.selected_dataset, customer_ids_list)
@@ -228,7 +228,7 @@ elif page == "Product Recommendations":
                 # Кнопка скачивания всех рекомендаций
                 st.subheader("4. Export Results")
                 
-                if st.button("📥 Download All Recommendations as CSV"):
+                if st.button("Download All Recommendations as CSV"):
                     all_recs = []
                     for customer in predictions_data:
                         for rec in customer['recommendations']:
@@ -254,9 +254,9 @@ elif page == "Model Analytics":
     st.header("📊 Model Analytics")
     
     if not st.session_state.selected_dataset:
-        st.warning("⚠️ Please select a dataset on the Training page first")
+        st.warning("Please select a dataset on the Training page first")
     elif not st.session_state.model_trained:
-        st.warning("⚠️ Please train the model first on the Training page")
+        st.warning("Please train the model first on the Training page")
     else:
         st.success(f"Analyzing: {st.session_state.selected_dataset}")
         
@@ -267,7 +267,7 @@ elif page == "Model Analytics":
                 
                 if 'error' not in metrics:
                     # Основные метрики
-                    st.subheader("📈 Key Metrics")
+                    st.subheader("Key Metrics")
                     
                     col1, col2, col3, col4 = st.columns(4)
                     with col1:
@@ -284,7 +284,7 @@ elif page == "Model Analytics":
                         st.metric("Model Type", metrics.get('model_type', 'RandomForest'))
                     
                     # Feature Importance
-                    st.subheader("🔥 Feature Importance")
+                    st.subheader("Feature Importance")
                     feature_imp = metrics.get('feature_importance', {})
                     if feature_imp:
                         imp_df = pd.DataFrame.from_dict(feature_imp, orient='index', columns=['importance'])
@@ -302,7 +302,7 @@ elif page == "Model Analytics":
                         st.plotly_chart(fig, use_container_width=True)
                     
                     # Распределение продуктов
-                    st.subheader("📦 Product Distribution")
+                    st.subheader("Product Distribution")
                     product_dist = metrics.get('product_distribution', {})
                     if product_dist:
                         col1, col2 = st.columns(2)
@@ -351,11 +351,11 @@ elif page == "Model Analytics":
                         st.plotly_chart(fig, use_container_width=True)
                         
                 else:
-                    st.error(f"❌ Failed to load metrics: {metrics.get('error')}")
+                    st.error(f"Failed to load metrics: {metrics.get('error')}")
         else:
             st.info("Click 'Refresh Analytics' to view model metrics and performance")
 elif page == 'How to use':
-    st.header("🚀 Quick Start Guide:")
+    st.header("Quick Start Guide:")
     st.subheader("1. Training Page")
     st.info("""
     → Select dataset  
