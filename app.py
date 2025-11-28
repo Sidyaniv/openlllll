@@ -58,7 +58,7 @@ if page == "Model Training":
     st.header("🎯 Model Training")
     
     # Получаем доступные датасеты
-    datasets = ["dataset_1", 'dataset_2', "dataset_3"]
+    datasets = ["retail", "marketplace"]
         # Selectbox для выбора датасета
     st.subheader("1. Select Dataset")
         
