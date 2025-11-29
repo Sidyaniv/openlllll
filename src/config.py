@@ -3,7 +3,7 @@ import torch
 # Backend
 BACKEND_URL = 'http://localhost:8000'
 
-DEFAULT_DATASET_PATH = None
+DEFAULT_DATASET_PATH = r'C:\Users\romae\PycharmProjects\PythonProject7\dataset_banking\dataset\small'
 
 # Гиперпараметры модели
 EMB_DIM = 512

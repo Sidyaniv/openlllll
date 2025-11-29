@@ -7,14 +7,20 @@ import random
 import numpy as np
 from sklearn.metrics.pairwise import cosine_similarity
 import torch
-
-from config import BACKEND_URL, POSITIVE_ACTIONS, DEVICE
+import pyarrow.dataset as ds
+from config import BACKEND_URL, POSITIVE_ACTIONS, DEFAULT_DATASET_PATH
 
 def get_dataset_path():
-    response = requests.get(f'{BACKEND_URL}/get_dataset_path')
-    if response.status_code != 200:
-        raise ValueError("Failed to get dataset path")
-    return response.json()['dataset_path']
+    try:
+        response = requests.get(f'{BACKEND_URL}/get_dataset_path')
+        if response.status_code == 200:
+            return response.json()['dataset_path']
+        else:
+            print("Backend not available, using local path.")
+            return DEFAULT_DATASET_PATH  # Fallback
+    except Exception as e:
+        print(f"Error connecting to backend: {e}. Using local path.")
+        return DEFAULT_DATASET_PATH  # Fallback
 
 def load_events(domain_path, dataset_path):
     event_files = glob.glob(os.path.join(dataset_path, domain_path, 'events/*.pq'))
@@ -23,28 +29,32 @@ def load_events(domain_path, dataset_path):
     events = pd.concat(pd.read_parquet(f) for f in event_files)
     return events
 
+
 def load_data(dataset_path):
-    users = pd.read_parquet(os.path.join(dataset_path, 'users.pq'))
-    brands = pd.read_parquet(os.path.join(dataset_path, 'brands.pq'))
-    marketplace_items = pd.read_parquet(os.path.join(dataset_path, 'marketplace/items.pq'))
-    retail_items = pd.read_parquet(os.path.join(dataset_path, 'retail/items.pq'))
-    offers_items = pd.read_parquet(os.path.join(dataset_path, 'offers/items.pq')) if os.path.exists(os.path.join(dataset_path, 'offers/items.pq')) else pd.DataFrame()
+    users = pd.read_parquet(os.path.join(dataset_path, 'users.pq'), engine='fastparquet')
+    brands = pd.read_parquet(os.path.join(dataset_path, 'brands.pq'),engine='fastparquet')
+    marketplace_items = pd.read_parquet(os.path.join(dataset_path, 'marketplace/items.pq'),engine='fastparquet')
+    retail_items = pd.read_parquet(os.path.join(dataset_path, 'retail/items.pq'), engine='fastparquet')
+
+    offers_path = os.path.join(dataset_path, 'offers/items.pq')
+    offers_items = pd.read_parquet(offers_path,engine='fastparquet') if os.path.exists(offers_path,engine='fastparquet') else pd.DataFrame()
+
+    print("ВСЁ ЗАГРУЖЕНО БЕЗ ОШИБОК! Можно учить модель.")
 
     # Combine items
     items = pd.concat([marketplace_items, retail_items, offers_items], ignore_index=True).drop_duplicates('item_id')
 
     # Load events
-    marketplace_events = load_events('marketplace', dataset_path)
-    retail_events = load_events('retail', dataset_path)
-    offers_events = load_events('offers', dataset_path)
-    # payments_events = load_events('payments', dataset_path)  # Если нужно
-    # reviews_events = load_events('reviews', dataset_path)  # Если нужно
+    marketplace_events = load_events('marketplace', dataset_path, engine='fastparquet')
+    retail_events = load_events('retail', dataset_path, engine='fastparquet')
+    offers_events = load_events('offers', dataset_path, engine='fastparquet')
 
     # Combine interactions
     interaction_events = pd.concat([marketplace_events, retail_events, offers_events], ignore_index=True)
 
     # Positives
-    positives = interaction_events[interaction_events['action_type'].isin(POSITIVE_ACTIONS)][['user_id', 'item_id', 'brand_id', 'timestamp', 'action_type']]
+    positives = interaction_events[interaction_events['action_type'].isin(POSITIVE_ACTIONS)][
+        ['user_id', 'item_id', 'brand_id', 'timestamp', 'action_type']]
 
     # Maps
     user_ids = sorted(positives['user_id'].unique())
@@ -54,7 +64,6 @@ def load_data(dataset_path):
     num_users = len(user_ids)
     num_items = len(item_ids)
 
-    # User positives
     user_positives = defaultdict(list)
     for _, row in positives.iterrows():
         user_positives[row['user_id']].append(row['item_id'])
@@ -137,3 +146,4 @@ def save_recommendations(recommendations):
     if response.status_code != 200:
         raise ValueError("Failed to save recommendations")
     print("Recommendations saved successfully")
+
