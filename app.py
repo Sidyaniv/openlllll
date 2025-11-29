@@ -89,7 +89,6 @@ def check_model_status():
         response = requests.get(f"{API_BASE_URL}/metrics/train", timeout=2)
         if response.status_code == 200:
             data = response.json()
-            print(data)
             # Проверяем, что метрики действительно есть (не ошибка)
             if data.get("status") != 'error':
                 return True
@@ -172,31 +171,45 @@ if page == "Обучение модели":
     if st.session_state.model_trained:
         st.success("Модель уже обучена!")
         
-        # Показываем результаты предыдущего обучения
-        # if st.session_state.training_result:
-        st.subheader("Результаты обучения")
-        col1, col2, col3, col4 = st.columns(4)
-        with col1:
-            st.metric("Размер датасета", f"{st.session_state.training_result.get('dataset_size', 0):,}")
-        with col2:
-            st.metric("Точность", f"{st.session_state.training_result.get('accuracy', 0):.2%}")
-        with col3:
-            st.metric("Кол-во признаков", len(st.session_state.training_result.get('features_used', [])))
-        with col4:
-            st.metric("Тип модели", st.session_state.training_result.get('model_type', 'Unknown'))
-            
-            # Показываем использованные фичи
-        with st.expander("Просмотр использованных признаков"):
-            features = st.session_state.training_result.get('features_used', [])
-            st.write(f"**Всего признаков:** {len(features)}")
-            for i, feature in enumerate(features, 1):
-                st.write(f"{i}. {feature}")
-        
-        # Загружаем метрики с бэкенда
+        # Загружаем метрики с бэкенда для отображения
         with st.spinner("Загрузка информации о модели..."):
             metrics = get_metrics("train")
-            if not metrics.get('error'):
-                st.info(f"Модель обучена на {metrics.get('dataset_size', 0):,} записях с точностью {metrics.get('accuracy', 0):.2%}")
+        
+        # Используем training_result если есть, иначе метрики с бэкенда
+        display_data = st.session_state.training_result if st.session_state.training_result else metrics
+        
+        # Показываем результаты обучения только если есть данные
+        if display_data and not display_data.get('error'):
+            st.subheader("Результаты обучения")
+            col1, col2, col3, col4 = st.columns(4)
+            with col1:
+                st.metric("Размер датасета", f"{display_data.get('dataset_size', 0):,}")
+            with col2:
+                st.metric("Точность", f"{display_data.get('accuracy', 0):.2%}")
+            with col3:
+                features_used = display_data.get('features_used', [])
+                if not features_used and display_data.get('feature_importance'):
+                    # Если нет features_used, используем ключи из feature_importance
+                    features_used = list(display_data.get('feature_importance', {}).keys())
+                st.metric("Кол-во признаков", len(features_used))
+            with col4:
+                st.metric("Тип модели", display_data.get('model_type', 'Unknown'))
+                
+            # Показываем использованные фичи
+            if features_used:
+                with st.expander("Просмотр использованных признаков"):
+                    st.write(f"**Всего признаков:** {len(features_used)}")
+                    for i, feature in enumerate(features_used, 1):
+                        st.write(f"{i}. {feature}")
+            
+            # Показываем важность признаков если доступна
+            if display_data.get('feature_importance'):
+                with st.expander("Важность признаков"):
+                    feature_importance = display_data.get('feature_importance', {})
+                    for feature, importance in sorted(feature_importance.items(), key=lambda x: x[1], reverse=True):
+                        st.write(f"**{feature}:** {importance:.4f}")
+        else:
+            st.warning("Не удалось загрузить информацию о модели. Попробуйте переобучить модель.")
         
         st.markdown("---")
         st.info("Вы можете перейти к генерации рекомендаций или переобучить модель")
@@ -204,7 +217,7 @@ if page == "Обучение модели":
         # Кнопка переобучения
         col1, col2, col3 = st.columns([1, 1, 2])
         with col1:
-            retrain_btn = st.button("Переобучить модель", type="secondary", use_container_width=True)
+            retrain_btn = st.button("Переобучить модель", type="secondary", width='stretch')
         
         if retrain_btn:
             with st.spinner("Переобучение модели... Это может занять несколько минут"):
@@ -226,7 +239,7 @@ if page == "Обучение модели":
         
         col1, col2, col3 = st.columns([1, 1, 2])
         with col1:
-            train_btn = st.button("Обучить модель", type="primary", use_container_width=True)
+            train_btn = st.button("Обучить модель", type="primary", width='stretch')
         
         if train_btn:
             with st.spinner("Обучение модели... Это может занять несколько минут"):
@@ -344,7 +357,7 @@ elif page == "Рекомендации":
             
             col1, col2, col3 = st.columns([1, 1, 2])
             with col1:
-                generate_btn = st.button("Сгенерировать рекомендации", type="primary", use_container_width=True)
+                generate_btn = st.button("Сгенерировать рекомендации", type="primary", width='stretch')
             
             # Генерация при нажатии кнопки
             if generate_btn:
@@ -359,7 +372,6 @@ elif page == "Рекомендации":
                             st.session_state.last_generated_dataset = selected_test_dataset
                             prediction_count = len(predictions.get('predictions', []))
                             st.success(f"Сгенерировано рекомендаций для {prediction_count} клиентов")
-                            st.balloons()
                         else:
                             error_msg = predictions.get('message') or "Неизвестная ошибка"
                             st.error(f"Ошибка генерации: {error_msg}")
@@ -486,7 +498,7 @@ elif page == "Рекомендации":
                                     plot_bgcolor='rgba(0,0,0,0)',
                                     paper_bgcolor='rgba(0,0,0,0)'
                                 )
-                                st.plotly_chart(fig, use_container_width=True)
+                                st.plotly_chart(fig, width='stretch')
                         
                         # Детальная таблица рекомендаций
                         st.markdown("---")
@@ -499,7 +511,7 @@ elif page == "Рекомендации":
                             # Улучшенное отображение таблицы
                             st.dataframe(
                                 display_df[['rank', 'product', 'probability', 'confidence']],
-                                use_container_width=True,
+                                width='stretch',
                                 hide_index=True,
                                 column_config={
                                     "rank": "Ранг",
@@ -527,7 +539,7 @@ elif page == "Рекомендации":
                     
                     col1, col2 = st.columns(2)
                     with col1:
-                        if st.button("Скачать все рекомендации как CSV", use_container_width=True):
+                        if st.button("Скачать все рекомендации как CSV", width='stretch'):
                             all_recs = []
                             for customer in predictions_data:
                                 for rec in customer.get('recommendations', []):
@@ -546,12 +558,12 @@ elif page == "Рекомендации":
                                 data=csv,
                                 file_name=f"recommendations_{selected_test_dataset}_{pd.Timestamp.now().strftime('%Y%m%d_%H%M%S')}.csv",
                                 mime="text/csv",
-                                use_container_width=True
+                                width='stretch'
                             )
                     
                     with col2:
                         # Показываем предпросмотр данных для экспорта
-                        if st.button("Предпросмотр данных", use_container_width=True):
+                        if st.button("Предпросмотр данных", width='stretch'):
                             preview_data = []
                             for customer in predictions_data[:5]:  # Первые 5 для предпросмотра
                                 for rec in customer.get('recommendations', [])[:3]:  # Первые 3 рекомендации
@@ -564,7 +576,7 @@ elif page == "Рекомендации":
                             
                             if preview_data:
                                 preview_df = pd.DataFrame(preview_data)
-                                st.dataframe(preview_df, use_container_width=True)
+                                st.dataframe(preview_df, width='stretch')
                                 st.caption(f"Показано {len(preview_data)} записей из {sum(len(c.get('recommendations', [])) for c in predictions_data)}")
 
 # Страница 3: Аналитика модели
@@ -615,7 +627,7 @@ elif page == "Аналитика модели":
                         labels={'importance': 'Важность', 'index': 'Признаки'}
                     )
                     fig.update_layout(showlegend=False, yaxis={'categoryorder': 'total ascending'})
-                    st.plotly_chart(fig, use_container_width=True)
+                    st.plotly_chart(fig, width='stretch')
                 
                 # Распределение продуктов
                 st.subheader("Распределение продуктов")
@@ -629,7 +641,7 @@ elif page == "Аналитика модели":
                             names=list(product_dist.keys()),
                             title="Распределение предпочтений продуктов"
                         )
-                        st.plotly_chart(fig_pie, use_container_width=True)
+                        st.plotly_chart(fig_pie, width='stretch')
                     
                     with col2:
                         fig_bar = px.bar(
@@ -638,7 +650,7 @@ elif page == "Аналитика модели":
                             title="Количество по продуктам",
                             labels={'x': 'Продукт', 'y': 'Количество'}
                         )
-                        st.plotly_chart(fig_bar, use_container_width=True)
+                        st.plotly_chart(fig_bar, width='stretch')
                 
                 # Сегменты клиентов
                 st.subheader("Сегменты клиентов")
@@ -663,7 +675,7 @@ elif page == "Аналитика модели":
                         labels={'x': 'Сегмент', 'y': 'Количество клиентов'},
                         color=list(segment_data.keys())
                     )
-                    st.plotly_chart(fig, use_container_width=True)
+                    st.plotly_chart(fig, width='stretch')
             else:
                 error_msg = metrics.get('error') or "Неизвестная ошибка"
                 st.error(f"Ошибка загрузки метрик: {error_msg}")
